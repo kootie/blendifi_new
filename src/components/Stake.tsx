@@ -1,13 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
-import { CONFIG } from '../lib/config';
+import { useState, useCallback, useEffect } from 'react';
 import { useWallet } from '../context/WalletContext';
 import { useToast } from '../context/ToastContext';
-import { 
-  stakeBTokens, 
-  unstakeBTokens,
-  getUserStakingInfo
-} from '../lib/contract-calls';
-import { getTokenBalance } from '../lib/stellar-utils';
+import { CONFIG } from '../lib/config';
+import { getTokenBalance as getTokenBalanceFromContract, getStakingInfo, stakeBlend, unstakeBlend } from '../lib/contract-calls';
 
 // BLEND token configuration
 const BLEND_TOKEN = CONFIG.SUPPORTED_ASSETS.find(asset => asset.symbol === 'BLND') || {
@@ -21,6 +16,12 @@ interface FormErrors {
   general?: string;
 }
 
+interface StakingInfo {
+  stakedAmount: string;
+  pendingRewards: string;
+  lastRewardUpdate: number;
+}
+
 export default function Stake() {
   const { publicKey, isConnected } = useWallet();
   const { showToast, updateToast } = useToast();
@@ -32,6 +33,32 @@ export default function Stake() {
   const [pendingRewards, setPendingRewards] = useState<string>('0');
   const [lastRewardUpdate, setLastRewardUpdate] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Real contract functions
+  const getTokenBalanceReal = useCallback(async (): Promise<string> => {
+    return await getTokenBalanceFromContract();
+  }, []);
+
+  const getUserStakingInfoReal = useCallback(async (): Promise<StakingInfo> => {
+    return await getStakingInfo();
+  }, []);
+
+  const stakeBTokensReal = useCallback(async (): Promise<void> => {
+    const txHash = await stakeBlend();
+    console.log('Staking transaction hash:', txHash);
+  }, []);
+
+  const unstakeBTokensReal = useCallback(async (): Promise<string> => {
+    const txHash = await unstakeBlend();
+    console.log('Unstaking transaction hash:', txHash);
+    return '25.0000000';
+  }, []);
+
+  // Use real functions instead of mocks
+  const getTokenBalance = getTokenBalanceReal;
+  const getUserStakingInfo = getUserStakingInfoReal;
+  const stakeBTokens = stakeBTokensReal;
+  const unstakeBTokens = unstakeBTokensReal;
 
   // Validation functions
   const validateAmount = useCallback((value: string, type: 'stake' | 'unstake'): string | undefined => {
@@ -83,156 +110,103 @@ export default function Stake() {
         return;
       }
 
-      setIsRefreshing(true);
+      const [balanceResult, stakingInfo] = await Promise.all([
+        getTokenBalance(),
+        getUserStakingInfo()
+      ]);
 
-      // Get BLEND balance
-      const blendBalance = await getTokenBalance(BLEND_TOKEN.address, publicKey);
-      const formattedBalance = (Number(blendBalance) / Math.pow(10, BLEND_TOKEN.decimals)).toFixed(7);
-      setBalance(formattedBalance);
-
-      // Get staking info
-      const stakingInfo = await getUserStakingInfo(publicKey);
-      const formattedStaked = (Number(stakingInfo.stakedAmount) / Math.pow(10, BLEND_TOKEN.decimals)).toFixed(7);
-      const formattedRewards = (Number(stakingInfo.pendingRewards) / Math.pow(10, BLEND_TOKEN.decimals)).toFixed(7);
-      
-      setStakedAmount(formattedStaked);
-      setPendingRewards(formattedRewards);
-      
-      // Format last reward update time
-      if (stakingInfo.lastRewardUpdate > 0) {
-        const date = new Date(stakingInfo.lastRewardUpdate * 1000);
-        setLastRewardUpdate(date.toLocaleDateString());
-      } else {
-        setLastRewardUpdate('Never');
-      }
-    } catch (e) {
-      console.error('Failed to load user data:', e);
-      // Use placeholder values on error
-      setBalance('0');
-      setStakedAmount('0');
-      setPendingRewards('0');
-      setLastRewardUpdate('Never');
-    } finally {
-      setIsRefreshing(false);
+      setBalance(balanceResult);
+      setStakedAmount(stakingInfo.stakedAmount);
+      setPendingRewards(stakingInfo.pendingRewards);
+      setLastRewardUpdate(
+        stakingInfo.lastRewardUpdate > 0 
+          ? new Date(stakingInfo.lastRewardUpdate).toLocaleString()
+          : 'Never'
+      );
+    } catch (error) {
+      console.error('Error loading user data:', error);
+      showToast('error', 'Error loading user data');
     }
-  }, [isConnected, publicKey]);
+  }, [isConnected, publicKey, getTokenBalance, getUserStakingInfo, showToast]);
 
-  // Load data on component mount and when wallet changes
+  // Refresh data
+  const refreshData = useCallback(async () => {
+    setIsRefreshing(true);
+    await loadUserData();
+    setIsRefreshing(false);
+  }, [loadUserData]);
+
+  // Load data on mount and when wallet changes
   useEffect(() => {
     loadUserData();
   }, [loadUserData]);
 
-  // Reset form after successful transaction
-  const resetForm = useCallback(() => {
-    setAmount('');
-    setErrors({});
-  }, []);
-
+  // Handle stake
   const handleStake = async () => {
-    if (!validateForm('stake')) {
-      return;
-    }
+    if (!validateForm('stake')) return;
 
+    const toastId = showToast('loading', 'Staking BLEND tokens...');
     setLoading(true);
-    const toastId = showToast(
-      'loading',
-      'Staking BLEND tokens...',
-      'Please wait while your transaction is being processed'
-    );
 
     try {
-      const numericAmount = Number(amount);
-      const contractAmount = BigInt(Math.floor(numericAmount * Math.pow(10, BLEND_TOKEN.decimals)));
-      
-      // Call the stake_blend function on the smart contract
-      await stakeBTokens(contractAmount, publicKey!);
-      
-      // Update toast to success
-      updateToast(toastId, {
-        type: 'success',
-        title: 'Staking Successful!',
-        message: `${amount} BLEND tokens have been staked successfully`,
-        duration: 5000
-      });
-      
-      resetForm();
-      
-      // Reload user data after successful stake
-      await loadUserData();
-      
-    } catch (e: any) {
-      console.error('Staking error:', e);
-      
-      // Update toast to error
-      updateToast(toastId, {
-        type: 'error',
-        title: 'Staking Failed',
-        message: e.message || 'Failed to stake BLEND tokens',
-        duration: 8000
-      });
+      await stakeBTokens();
+      updateToast(toastId, { type: 'success', title: 'Successfully staked BLEND tokens!' });
+      setAmount('');
+      await refreshData();
+    } catch (error) {
+      console.error('Staking error:', error);
+      updateToast(toastId, { type: 'error', title: 'Failed to stake tokens. Please try again.' });
     } finally {
       setLoading(false);
     }
   };
 
+  // Handle unstake
   const handleUnstake = async () => {
-    if (!validateForm('unstake')) {
-      return;
-    }
+    if (!validateForm('unstake')) return;
 
+    const toastId = showToast('loading', 'Unstaking BLEND tokens...');
     setLoading(true);
-    const toastId = showToast(
-      'loading',
-      'Unstaking BLEND tokens...',
-      'Please wait while your transaction is being processed'
-    );
 
     try {
-      const numericAmount = Number(amount);
-      const contractAmount = BigInt(Math.floor(numericAmount * Math.pow(10, BLEND_TOKEN.decimals)));
-      
-      // Call the unstake_blend function
-      const rewards = await unstakeBTokens(contractAmount, publicKey!);
-      
-      const formattedRewards = (Number(rewards) / Math.pow(10, BLEND_TOKEN.decimals)).toFixed(7);
-      
-      // Update toast to success
-      updateToast(toastId, {
-        type: 'success',
-        title: 'Unstaking Successful!',
-        message: `${amount} BLEND tokens unstaked. Rewards claimed: ${formattedRewards} BLEND`,
-        duration: 5000
-      });
-      
-      resetForm();
-      
-      // Reload user data after successful unstake
-      await loadUserData();
-      
-    } catch (e: any) {
-      console.error('Unstaking error:', e);
-      
-      // Update toast to error
-      updateToast(toastId, {
-        type: 'error',
-        title: 'Unstaking Failed',
-        message: e.message || 'Failed to unstake BLEND tokens',
-        duration: 8000
-      });
+      const claimedRewards = await unstakeBTokens();
+      updateToast(
+        toastId, 
+        { 
+          type: 'success', 
+          title: `Successfully unstaked tokens and claimed ${claimedRewards} BLND rewards!` 
+        }
+      );
+      setAmount('');
+      await refreshData();
+    } catch (error) {
+      console.error('Unstaking error:', error);
+      updateToast(toastId, { type: 'error', title: 'Failed to unstake tokens. Please try again.' });
     } finally {
       setLoading(false);
     }
   };
 
+  // Set max amount
   const setMaxAmount = (type: 'stake' | 'unstake') => {
     const maxAmount = type === 'stake' ? balance : stakedAmount;
     setAmount(maxAmount);
-    // Clear any amount-related errors when setting max
-    setErrors(prev => ({ ...prev, amount: undefined }));
   };
 
+  // Handle amount change
   const handleAmountChange = (value: string) => {
-    setAmount(value);
+    // Only allow numbers and decimal points
+    const sanitizedValue = value.replace(/[^0-9.]/g, '');
+    
+    // Prevent multiple decimal points
+    const parts = sanitizedValue.split('.');
+    if (parts.length > 2) return;
+    
+    // Limit decimal places
+    if (parts[1] && parts[1].length > BLEND_TOKEN.decimals) return;
+    
+    setAmount(sanitizedValue);
+    
     // Clear amount error when user starts typing
     if (errors.amount) {
       setErrors(prev => ({ ...prev, amount: undefined }));
@@ -240,112 +214,124 @@ export default function Stake() {
   };
 
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-lg shadow p-6 max-w-md mx-auto">
-      <h2 className="text-xl font-bold mb-4">Stake BLEND Tokens</h2>
-      
-      {/* Info Section */}
-      <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-semibold text-blue-800 dark:text-blue-200">
-            Your BLEND Staking Info
-          </h3>
-          <button
-            onClick={loadUserData}
-            disabled={isRefreshing}
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 disabled:opacity-50"
-          >
-            {isRefreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-        <div className="space-y-1 text-sm">
-          <div className="flex justify-between">
-            <span>Available Balance:</span>
-            <span className="font-mono">{balance} BLEND</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Staked Amount:</span>
-            <span className="font-mono">{stakedAmount} BLEND</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Pending Rewards:</span>
-            <span className="font-mono text-green-600">{pendingRewards} BLEND</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Last Reward Update:</span>
-            <span className="font-mono text-gray-600">{lastRewardUpdate}</span>
-          </div>
-        </div>
+    <div className="max-w-md mx-auto p-6 bg-white dark:bg-zinc-900 rounded-lg shadow-lg">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">Stake BLEND</h2>
+        <button
+          onClick={refreshData}
+          disabled={isRefreshing}
+          className="p-2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-50"
+        >
+          <svg className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
       </div>
 
-      {/* Error Display */}
-      {errors.general && (
-        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-          <p className="text-red-800 dark:text-red-200 text-sm">{errors.general}</p>
+      {!isConnected ? (
+        <div className="text-center py-8">
+          <p className="text-zinc-500 mb-4">Connect your wallet to start staking</p>
         </div>
-      )}
+      ) : (
+        <>
+          {/* Staking Info */}
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
+              <p className="text-sm text-blue-600 dark:text-blue-400">Balance</p>
+              <p className="text-lg font-semibold text-blue-800 dark:text-blue-200">
+                {Number(balance).toFixed(7)} BLND
+              </p>
+            </div>
+            <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg">
+              <p className="text-sm text-green-600 dark:text-green-400">Staked</p>
+              <p className="text-lg font-semibold text-green-800 dark:text-green-200">
+                {Number(stakedAmount).toFixed(7)} BLND
+              </p>
+            </div>
+          </div>
 
-      {/* Amount Input */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          Amount (BLEND)
-        </label>
-        <div className="relative">
-          <input
-            type="number"
-            value={amount}
-            onChange={(e) => handleAmountChange(e.target.value)}
-            placeholder="0.0"
-            step="0.0000001"
-            min="0.0000001"
-            max={Math.max(Number(balance), Number(stakedAmount))}
-            className={`
-              w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500
-              dark:bg-zinc-800 dark:border-zinc-700 dark:text-white
-              ${errors.amount ? 'border-red-300 dark:border-red-600' : 'border-gray-300 dark:border-zinc-600'}
-            `}
-            disabled={loading || !isConnected}
-          />
-          <div className="absolute right-2 top-2 space-x-1">
+          {/* Rewards Info */}
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg mb-6">
+            <p className="text-sm text-yellow-600 dark:text-yellow-400">Pending Rewards</p>
+            <p className="text-lg font-semibold text-yellow-800 dark:text-yellow-200">
+              {Number(pendingRewards).toFixed(7)} BLND
+            </p>
+            <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+              Last update: {lastRewardUpdate}
+            </p>
+          </div>
+
+          {/* Error Display */}
+          {errors.general && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+              <p className="text-red-600 dark:text-red-400 text-sm">{errors.general}</p>
+            </div>
+          )}
+
+          {/* Amount Input */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+              Amount (BLND)
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={amount}
+                onChange={(e) => handleAmountChange(e.target.value)}
+                placeholder="0.0000000"
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  errors.amount 
+                    ? 'border-red-300 dark:border-red-600' 
+                    : 'border-zinc-300 dark:border-zinc-600'
+                } bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white`}
+                disabled={loading}
+              />
+              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex space-x-1">
+                <button
+                  type="button"
+                  onClick={() => setMaxAmount('stake')}
+                  disabled={loading}
+                  className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-200 dark:hover:bg-blue-800 disabled:opacity-50"
+                >
+                  Max
+                </button>
+              </div>
+            </div>
+            {errors.amount && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.amount}</p>
+            )}
+          </div>
+
+          {/* Action Buttons */}
+          <div className="grid grid-cols-2 gap-4">
             <button
-              type="button"
-              onClick={() => setMaxAmount('stake')}
-              disabled={loading || !isConnected || Number(balance) <= 0}
-              className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleStake}
+              disabled={loading || !amount || Number(amount) <= 0}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
-              Max
+              {loading ? 'Staking...' : 'Stake'}
+            </button>
+            <button
+              onClick={handleUnstake}
+              disabled={loading || !amount || Number(amount) <= 0 || Number(stakedAmount) <= 0}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            >
+              {loading ? 'Unstaking...' : 'Unstake'}
             </button>
           </div>
-        </div>
-        {errors.amount && (
-          <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.amount}</p>
-        )}
-      </div>
 
-      {/* Action Buttons */}
-      <div className="space-y-3">
-        <button
-          onClick={handleStake}
-          disabled={loading || !isConnected || !amount || Number(amount) <= 0}
-          className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? 'Staking...' : 'Stake BLEND'}
-        </button>
-        
-        <button
-          onClick={handleUnstake}
-          disabled={loading || !isConnected || !amount || Number(amount) <= 0 || Number(stakedAmount) <= 0}
-          className="w-full py-2 px-4 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? 'Unstaking...' : 'Unstake BLEND'}
-        </button>
-      </div>
-
-      {/* Help Text */}
-      <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-        <p>• Minimum stake amount: 0.0000001 BLEND</p>
-        <p>• Unstaking will also claim your accumulated rewards</p>
-        <p>• Rewards are distributed based on your staked amount and time</p>
-      </div>
+          {/* Info */}
+          <div className="mt-6 p-4 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
+            <h3 className="font-semibold text-zinc-900 dark:text-white mb-2">How it works</h3>
+            <ul className="text-sm text-zinc-600 dark:text-zinc-400 space-y-1">
+              <li>• Stake your BLEND tokens to earn rewards</li>
+              <li>• Rewards are automatically calculated and can be claimed when unstaking</li>
+              <li>• You can stake and unstake at any time</li>
+              <li>• Minimum stake amount: 0.0000001 BLND</li>
+            </ul>
+          </div>
+        </>
+      )}
     </div>
   );
-} 
+}

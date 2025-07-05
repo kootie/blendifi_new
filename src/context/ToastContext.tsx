@@ -1,10 +1,19 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
-import { Toast, showToast as createToast, updateToast as updateToastState, removeToast as removeToastState } from '../components/Toast';
+import { Toast, showToast as showToastUtil, updateToast as updateToastUtil, dismissToast as dismissToastUtil } from '../components/Toast';
 
 interface ToastContextType {
   toasts: Toast[];
-  showToast: (type: Toast['type'], title: string, message?: string, hash?: string, duration?: number) => string;
-  updateToast: (id: string, updates: Partial<Toast>) => void;
+  showToast: (
+    type: Toast['type'],
+    title: string,
+    options?: {
+      message?: string;
+      hash?: string;
+      duration?: number;
+      action?: { label: string; onClick: () => void };
+    }
+  ) => string;
+  updateToast: (id: string, updates: Partial<Omit<Toast, 'id'>>) => void;
   removeToast: (id: string) => void;
 }
 
@@ -13,22 +22,16 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined);
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = (
-    type: Toast['type'],
-    title: string,
-    message?: string,
-    hash?: string,
-    duration?: number
-  ): string => {
-    return createToast(setToasts, type, title, message, hash, duration);
+  const showToast: ToastContextType['showToast'] = (type, title, options) => {
+    return showToastUtil(setToasts, type, title, options);
   };
 
-  const updateToast = (id: string, updates: Partial<Toast>) => {
-    updateToastState(setToasts, id, updates);
+  const updateToast: ToastContextType['updateToast'] = (id, updates) => {
+    updateToastUtil(setToasts, id, updates);
   };
 
-  const removeToast = (id: string) => {
-    removeToastState(setToasts, id);
+  const removeToast: ToastContextType['removeToast'] = (id) => {
+    dismissToastUtil(setToasts, id);
   };
 
   return (

@@ -1,13 +1,19 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, AlertCircle, X } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, X, Loader2 } from 'lucide-react';
+
+export type ToastType = 'success' | 'error' | 'info' | 'loading' | 'warning';
 
 export interface Toast {
   id: string;
-  type: 'success' | 'error' | 'info' | 'loading';
+  type: ToastType;
   title: string;
   message?: string;
   hash?: string;
   duration?: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
 interface ToastProps {
@@ -17,19 +23,26 @@ interface ToastProps {
 
 export function Toast({ toast, onRemove }: ToastProps) {
   const [isVisible, setIsVisible] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
 
   useEffect(() => {
     setIsVisible(true);
-    
+
     if (toast.duration !== 0) {
       const timer = setTimeout(() => {
-        setIsVisible(false);
-        setTimeout(() => onRemove(toast.id), 300);
+        handleDismiss();
       }, toast.duration || 5000);
-      
+
       return () => clearTimeout(timer);
     }
-  }, [toast.id, toast.duration, onRemove]);
+  }, [toast.id, toast.duration]);
+
+  const handleDismiss = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      onRemove(toast.id);
+    }, 300);
+  };
 
   const getIcon = () => {
     switch (toast.type) {
@@ -38,7 +51,9 @@ export function Toast({ toast, onRemove }: ToastProps) {
       case 'error':
         return <XCircle className="w-5 h-5 text-red-500" />;
       case 'loading':
-        return <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />;
+        return <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />;
+      case 'warning':
+        return <AlertCircle className="w-5 h-5 text-yellow-500" />;
       default:
         return <AlertCircle className="w-5 h-5 text-blue-500" />;
     }
@@ -52,6 +67,8 @@ export function Toast({ toast, onRemove }: ToastProps) {
         return 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800';
       case 'loading':
         return 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800';
+      case 'warning':
+        return 'bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800';
       default:
         return 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800';
     }
@@ -65,8 +82,25 @@ export function Toast({ toast, onRemove }: ToastProps) {
         return 'text-red-800 dark:text-red-200';
       case 'loading':
         return 'text-blue-800 dark:text-blue-200';
+      case 'warning':
+        return 'text-yellow-800 dark:text-yellow-200';
       default:
         return 'text-blue-800 dark:text-blue-200';
+    }
+  };
+
+  const getBorderColor = () => {
+    switch (toast.type) {
+      case 'success':
+        return 'border-green-300 dark:border-green-700';
+      case 'error':
+        return 'border-red-300 dark:border-red-700';
+      case 'loading':
+        return 'border-blue-300 dark:border-blue-700';
+      case 'warning':
+        return 'border-yellow-300 dark:border-yellow-700';
+      default:
+        return 'border-blue-300 dark:border-blue-700';
     }
   };
 
@@ -74,47 +108,65 @@ export function Toast({ toast, onRemove }: ToastProps) {
     <div
       className={`
         transform transition-all duration-300 ease-in-out
-        ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
-        ${getBgColor()}
-        border rounded-lg p-4 shadow-lg max-w-sm w-full
+        ${isVisible && !isExiting ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
+        ${getBgColor()} ${getBorderColor()}
+        border rounded-lg p-4 shadow-lg w-full max-w-xs sm:max-w-sm
+        flex items-start space-x-3
       `}
+      role="alert"
+      aria-live="polite"
     >
-      <div className="flex items-start space-x-3">
-        <div className="flex-shrink-0 mt-0.5">
-          {getIcon()}
+      <div className="flex-shrink-0 mt-0.5">
+        {getIcon()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={`font-medium ${getTextColor()}`}>
+          {toast.title}
         </div>
-        <div className="flex-1 min-w-0">
-          <div className={`font-medium ${getTextColor()}`}>
-            {toast.title}
+        {toast.message && (
+          <div className={`mt-1 text-sm ${getTextColor()} opacity-90`}>
+            {toast.message}
           </div>
-          {toast.message && (
-            <div className={`mt-1 text-sm ${getTextColor()} opacity-90`}>
-              {toast.message}
-            </div>
-          )}
-          {toast.hash && (
-            <div className="mt-2">
-              <a
-                href={`https://stellar.expert/explorer/testnet/tx/${toast.hash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline break-all"
-              >
-                View Transaction: {toast.hash.slice(0, 8)}...{toast.hash.slice(-8)}
-              </a>
-            </div>
-          )}
-        </div>
+        )}
+        {toast.hash && (
+          <div className="mt-2">
+            <a
+              href={`https://stellar.expert/explorer/testnet/tx/${toast.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline break-all"
+              aria-label="View transaction on explorer"
+            >
+              View Transaction: {toast.hash.slice(0, 8)}...{toast.hash.slice(-8)}
+            </a>
+          </div>
+        )}
+        {toast.action && (
+          <button
+            onClick={() => {
+              toast.action?.onClick();
+              handleDismiss();
+            }}
+            className={`mt-2 text-xs font-medium ${
+              toast.type === 'error' ? 'text-red-600 dark:text-red-400' :
+              toast.type === 'success' ? 'text-green-600 dark:text-green-400' :
+              toast.type === 'warning' ? 'text-yellow-600 dark:text-yellow-400' :
+              'text-blue-600 dark:text-blue-400'
+            } hover:underline`}
+          >
+            {toast.action.label}
+          </button>
+        )}
+      </div>
+      {toast.type !== 'loading' && (
         <button
-          onClick={() => {
-            setIsVisible(false);
-            setTimeout(() => onRemove(toast.id), 300);
-          }}
+          onClick={handleDismiss}
           className="flex-shrink-0 ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          aria-label="Dismiss notification"
         >
           <X className="w-4 h-4" />
         </button>
-      </div>
+      )}
     </div>
   );
 }
@@ -122,11 +174,32 @@ export function Toast({ toast, onRemove }: ToastProps) {
 interface ToastContainerProps {
   toasts: Toast[];
   onRemove: (id: string) => void;
+  position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
 }
 
-export function ToastContainer({ toasts, onRemove }: ToastContainerProps) {
+export function ToastContainer({ 
+  toasts, 
+  onRemove, 
+  position = 'top-right' 
+}: ToastContainerProps) {
+  const getPositionClass = () => {
+    switch (position) {
+      case 'top-left':
+        return 'top-4 left-4';
+      case 'bottom-right':
+        return 'bottom-4 right-4';
+      case 'bottom-left':
+        return 'bottom-4 left-4';
+      default:
+        return 'top-4 right-4';
+    }
+  };
+
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    <div 
+      className={`fixed z-50 space-y-2 ${getPositionClass()}`}
+      aria-live="assertive"
+    >
       {toasts.map((toast) => (
         <Toast key={toast.id} toast={toast} onRemove={onRemove} />
       ))}
@@ -136,29 +209,44 @@ export function ToastContainer({ toasts, onRemove }: ToastContainerProps) {
 
 // Toast utility functions
 export const createToast = (
-  type: Toast['type'],
+  type: ToastType,
   title: string,
-  message?: string,
-  hash?: string,
-  duration?: number
+  options?: {
+    message?: string;
+    hash?: string;
+    duration?: number;
+    action?: {
+      label: string;
+      onClick: () => void;
+    };
+  }
 ): Toast => ({
-  id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+  id: Date.now().toString() + Math.random().toString(36).substring(2, 11),
   type,
   title,
-  message,
-  hash,
-  duration: duration !== undefined ? duration : (type === 'loading' ? 0 : 5000)
+  message: options?.message,
+  hash: options?.hash,
+  duration: options?.duration !== undefined 
+    ? options.duration 
+    : (type === 'loading' ? 0 : 5000),
+  action: options?.action
 });
 
 export const showToast = (
   setToasts: React.Dispatch<React.SetStateAction<Toast[]>>,
-  type: Toast['type'],
+  type: ToastType,
   title: string,
-  message?: string,
-  hash?: string,
-  duration?: number
+  options?: {
+    message?: string;
+    hash?: string;
+    duration?: number;
+    action?: {
+      label: string;
+      onClick: () => void;
+    };
+  }
 ) => {
-  const toast = createToast(type, title, message, hash, duration);
+  const toast = createToast(type, title, options);
   setToasts(prev => [...prev, toast]);
   return toast.id;
 };
@@ -166,16 +254,48 @@ export const showToast = (
 export const updateToast = (
   setToasts: React.Dispatch<React.SetStateAction<Toast[]>>,
   id: string,
-  updates: Partial<Toast>
+  updates: Partial<Omit<Toast, 'id'>>
 ) => {
   setToasts(prev => prev.map(toast => 
     toast.id === id ? { ...toast, ...updates } : toast
   ));
 };
 
-export const removeToast = (
+export const dismissToast = (
   setToasts: React.Dispatch<React.SetStateAction<Toast[]>>,
   id: string
 ) => {
   setToasts(prev => prev.filter(toast => toast.id !== id));
-}; 
+};
+
+export const useToasts = () => {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  return {
+    toasts,
+    showToast: (
+      type: ToastType,
+      title: string,
+      options?: {
+        message?: string;
+        hash?: string;
+        duration?: number;
+        action?: {
+          label: string;
+          onClick: () => void;
+        };
+      }
+    ) => showToast(setToasts, type, title, options),
+    updateToast: (id: string, updates: Partial<Omit<Toast, 'id'>>) => 
+      updateToast(setToasts, id, updates),
+    dismissToast: (id: string) => dismissToast(setToasts, id),
+    dismissAllToasts: () => setToasts([]),
+    ToastContainer: ({ position }: { position?: ToastContainerProps['position'] }) => (
+      <ToastContainer 
+        toasts={toasts} 
+        onRemove={(id) => dismissToast(setToasts, id)} 
+        position={position}
+      />
+    )
+  };
+};

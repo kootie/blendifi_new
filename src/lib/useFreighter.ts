@@ -187,7 +187,7 @@ export const useFreighter = (): UseFreighterResult => {
       setKit({
         server,
         networkPassphrase: NETWORK_PASSPHRASE,
-        horizonUrl: CONFIG.STELLAR_HORIZON_URL,
+        horizonUrl: CONFIG.RPC_URL,
       });
     } else {
       setKit(null);

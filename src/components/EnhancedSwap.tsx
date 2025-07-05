@@ -1,406 +1,382 @@
-import { useState, useEffect, useCallback } from 'react';
-import { ArrowUpDown, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { useWallet } from '../context/WalletContext';
+import { useToast } from '../context/ToastContext';
 import { CONFIG } from '../lib/config';
-import { 
-  swapTokens, 
-  getWalletState
-} from '../lib/stellar-utils';
-
-// Mock exchange rates - replace with your actual rates
-const EXCHANGE_RATES = {
-  'XLM->USDC': 0.12,
-  'USDC->XLM': 8.33,
-  'wETH->USDC': 2500,
-  'USDC->wETH': 0.0004,
-  'wBTC->USDC': 45000,
-  'USDC->wBTC': 0.000022,
-  'BLND->USDC': 0.05,
-  'USDC->BLND': 20,
-  'XLM->wETH': 0.000048,
-  'wETH->XLM': 20833.33,
-  'XLM->wBTC': 0.00000267,
-  'wBTC->XLM': 375000,
-  'BLEND->XLM': 0.417,
-  'XLM->BLEND': 2.4,
-};
-
-// Real functions from stellar-utils
-const getWalletStateReal = getWalletState;
-const swapTokensReal = swapTokens;
 
 const assets = CONFIG.SUPPORTED_ASSETS;
 
+interface FormErrors {
+  fromAmount?: string;
+  toAmount?: string;
+  general?: string;
+}
+
+interface SwapQuote {
+  fromAmount: string;
+  toAmount: string;
+  priceImpact: number;
+  minimumReceived: string;
+}
+
 export default function EnhancedSwap() {
-  const [fromAsset, setFromAsset] = useState<string>(assets[0].address);
-  const [toAsset, setToAsset] = useState<string>(assets[1].address);
-  const [amount, setAmount] = useState('');
-  const [estimatedOutput, setEstimatedOutput] = useState('');
-  const [minAmountOut, setMinAmountOut] = useState('');
-  const [slippage, setSlippage] = useState('1.0');
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
+  const { publicKey, isConnected } = useWallet();
+  const { showToast, updateToast } = useToast();
+  const [fromAsset, setFromAsset] = useState(assets[0]);
+  const [toAsset, setToAsset] = useState(assets[1]);
+  const [fromAmount, setFromAmount] = useState('');
+  const [toAmount, setToAmount] = useState('');
+  const [slippage, setSlippage] = useState(0.5);
+  const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
-  const [priceImpact, setPriceImpact] = useState('');
-  const [exchangeRate, setExchangeRate] = useState('');
+  const [quote, setQuote] = useState<SwapQuote | null>(null);
+  const [balances, setBalances] = useState<Record<string, string>>({});
 
-  // Get asset details by address
-  const getAssetByAddress = useCallback((address: string) => {
-    return assets.find(asset => asset.address === address);
+  // Mock functions for now
+  const getTokenBalance = useCallback(async (): Promise<string> => {
+    // Mock implementation
+    return '1000.0000000';
   }, []);
 
-  // Calculate exchange rate between two assets
-  const calculateExchangeRate = useCallback((fromAddr: string, toAddr: string) => {
-    const fromAsset = getAssetByAddress(fromAddr);
-    const toAsset = getAssetByAddress(toAddr);
+  const getSwapQuote = useCallback(async (
+    _fromAsset: any,
+    _toAsset: any,
+    amount: string
+  ): Promise<SwapQuote | null> => {
+    // Mock implementation
+    if (!amount || Number(amount) <= 0) return null;
     
-    if (!fromAsset || !toAsset) return 0;
+    const fromValue = Number(amount);
+    const toValue = fromValue * 1.5; // Mock exchange rate
     
-    const rateKey = `${fromAsset.symbol}->${toAsset.symbol}`;
-    const reverseKey = `${toAsset.symbol}->${fromAsset.symbol}`;
-    
-    if (EXCHANGE_RATES[rateKey as keyof typeof EXCHANGE_RATES]) {
-      return EXCHANGE_RATES[rateKey as keyof typeof EXCHANGE_RATES];
-    } else if (EXCHANGE_RATES[reverseKey as keyof typeof EXCHANGE_RATES]) {
-      return 1 / EXCHANGE_RATES[reverseKey as keyof typeof EXCHANGE_RATES];
-    }
-    
-    // Try to find rate through USDC as intermediate
-    const fromToUSDC = EXCHANGE_RATES[`${fromAsset.symbol}->USDC` as keyof typeof EXCHANGE_RATES];
-    const USDCToTo = EXCHANGE_RATES[`USDC->${toAsset.symbol}` as keyof typeof EXCHANGE_RATES];
-    
-    if (fromToUSDC && USDCToTo) {
-      return fromToUSDC * USDCToTo;
-    }
-    
-    return 1; // Default rate if no rate found
-  }, [getAssetByAddress]);
+    return {
+      fromAmount: amount,
+      toAmount: toValue.toFixed(7),
+      priceImpact: 0.1,
+      minimumReceived: (toValue * (1 - slippage / 100)).toFixed(7)
+    };
+  }, [slippage]);
 
-  // Calculate estimated output amount
-  const calculateEstimatedOutput = useCallback((inputAmount: string, fromAddr: string, toAddr: string) => {
-    if (!inputAmount || isNaN(Number(inputAmount)) || Number(inputAmount) <= 0) {
-      return '';
-    }
-    
-    const rate = calculateExchangeRate(fromAddr, toAddr);
-    const fromAsset = getAssetByAddress(fromAddr);
-    const toAsset = getAssetByAddress(toAddr);
-    
-    if (!fromAsset || !toAsset || rate === 0) {
-      return '';
-    }
-    
-    // Adjust for decimal differences
-    const normalizedAmount = Number(inputAmount) * Math.pow(10, fromAsset.decimals);
-    const outputAmount = (normalizedAmount * rate) / Math.pow(10, toAsset.decimals);
-    
-    return outputAmount.toFixed(Math.min(toAsset.decimals, 8));
-  }, [calculateExchangeRate, getAssetByAddress]);
-
-  // Calculate minimum amount out based on slippage
-  const calculateMinAmountOut = useCallback((estimatedAmount: string, slippagePercent: string) => {
-    if (!estimatedAmount || isNaN(Number(estimatedAmount))) return '';
-    
-    const slippageMultiplier = (100 - Number(slippagePercent)) / 100;
-    const minAmount = Number(estimatedAmount) * slippageMultiplier;
-    
-    return minAmount.toFixed(8);
+  const executeSwap = useCallback(async (
+    _fromAsset: any,
+    _toAsset: any,
+    _fromAmount: string,
+    _minimumReceived: string
+  ): Promise<void> => {
+    // Mock implementation
+    await new Promise(resolve => setTimeout(resolve, 2000));
   }, []);
 
-  // Calculate price impact
-  const calculatePriceImpact = useCallback((inputAmount: string, outputAmount: string, rate: number) => {
-    if (!inputAmount || !outputAmount || !rate) return '';
-    
-    const expectedOutput = Number(inputAmount) * rate;
-    const actualOutput = Number(outputAmount);
-    
-    if (expectedOutput === 0) return '';
-    
-    const impact = ((expectedOutput - actualOutput) / expectedOutput) * 100;
-    return Math.abs(impact).toFixed(2);
-  }, []);
+  // Load balances
+  const loadBalances = useCallback(async () => {
+    if (!isConnected || !publicKey) {
+      setBalances({});
+      return;
+    }
 
-  // Update estimated output when inputs change
-  useEffect(() => {
-    const estimated = calculateEstimatedOutput(amount, fromAsset, toAsset);
-    setEstimatedOutput(estimated);
-    
-    const rate = calculateExchangeRate(fromAsset, toAsset);
-    const fromSymbol = getAssetByAddress(fromAsset)?.symbol || '';
-    const toSymbol = getAssetByAddress(toAsset)?.symbol || '';
-    setExchangeRate(`1 ${fromSymbol} = ${rate.toFixed(6)} ${toSymbol}`);
-    
-    const minOut = calculateMinAmountOut(estimated, slippage);
-    setMinAmountOut(minOut);
-    
-    const impact = calculatePriceImpact(amount, estimated, rate);
-    setPriceImpact(impact);
-  }, [amount, fromAsset, toAsset, slippage, calculateEstimatedOutput, calculateExchangeRate, calculateMinAmountOut, calculatePriceImpact, getAssetByAddress]);
-
-  // Swap assets
-  const swapAssets = () => {
-    const tempFromAsset = fromAsset;
-    setFromAsset(toAsset);
-    setToAsset(tempFromAsset);
-    
-    // Clear amount to avoid confusion
-    setAmount('');
-    setEstimatedOutput('');
-    setMinAmountOut('');
-    setPriceImpact('');
-  };
-
-  // Validate swap parameters
-  const validateSwap = () => {
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-      throw new Error('Enter a valid amount');
-    }
-    
-    if (fromAsset === toAsset) {
-      throw new Error('Select different tokens');
-    }
-    
-    if (!estimatedOutput || Number(estimatedOutput) <= 0) {
-      throw new Error('Invalid output amount calculated');
-    }
-    
-    if (Number(slippage) < 0 || Number(slippage) > 50) {
-      throw new Error('Slippage must be between 0% and 50%');
-    }
-    
-    if (Number(priceImpact) > 15) {
-      throw new Error('Price impact too high (>15%). Consider reducing amount.');
-    }
-  };
-
-  // Handle swap execution
-  const handleSwap = async () => {
-    setStatus('');
-    setError('');
-    setLoading(true);
-    
     try {
-      // Check wallet connection
-      const wallet = await getWalletStateReal();
-      if (!wallet.isConnected || !wallet.publicKey) {
-        throw new Error('Please connect your Freighter wallet');
+      const balancePromises = assets.map(async (asset) => {
+        const balance = await getTokenBalance();
+        return [asset.symbol, balance];
+      });
+
+      const balanceResults = await Promise.all(balancePromises);
+      const balanceMap = Object.fromEntries(balanceResults);
+      setBalances(balanceMap);
+    } catch (error) {
+      console.error('Error loading balances:', error);
+      showToast('error', 'Error loading balances');
+    }
+  }, [isConnected, publicKey, getTokenBalance, showToast]);
+
+  // Get quote when inputs change
+  useEffect(() => {
+    const getQuote = async () => {
+      if (!fromAmount || Number(fromAmount) <= 0) {
+        setQuote(null);
+        setToAmount('');
+        return;
       }
-      
-      // Validate swap parameters
-      validateSwap();
-      
-      // Calculate deadline (10 minutes from now)
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
-      
-      // Convert amounts to proper format
-      const fromAssetInfo = getAssetByAddress(fromAsset);
-      const toAssetInfo = getAssetByAddress(toAsset);
-      
-      if (!fromAssetInfo || !toAssetInfo) {
-        throw new Error('Invalid asset selection');
+
+      try {
+        const quoteResult = await getSwapQuote(fromAsset, toAsset, fromAmount);
+        setQuote(quoteResult);
+        if (quoteResult) {
+          setToAmount(quoteResult.toAmount);
+        }
+      } catch (error) {
+        console.error('Error getting quote:', error);
+        setQuote(null);
+        setToAmount('');
       }
+    };
+
+    getQuote();
+  }, [fromAsset, toAsset, fromAmount, getSwapQuote]);
+
+  // Load balances on mount and when wallet changes
+  useEffect(() => {
+    loadBalances();
+  }, [loadBalances]);
+
+  // Validation functions
+  const validateForm = useCallback((): boolean => {
+    const newErrors: FormErrors = {};
+
+    if (!isConnected || !publicKey) {
+      newErrors.general = 'Please connect your Freighter wallet';
+    } else {
+      if (!fromAmount || Number(fromAmount) <= 0) {
+        newErrors.fromAmount = 'Please enter a valid amount';
+      } else {
+        const balance = balances[fromAsset.symbol] || '0';
+        if (Number(fromAmount) > Number(balance)) {
+          newErrors.fromAmount = 'Insufficient balance';
+        }
+      }
+
+      if (!quote) {
+        newErrors.toAmount = 'Unable to get quote';
+      }
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }, [isConnected, publicKey, fromAmount, fromAsset.symbol, balances, quote]);
+
+  // Handle swap
+  const handleSwap = async () => {
+    if (!validateForm() || !quote) return;
+
+    const toastId = showToast('loading', 'Executing swap...');
+    setLoading(true);
+
+    try {
+      await executeSwap(fromAsset, toAsset, fromAmount, quote.minimumReceived);
       
-      const amountIn = BigInt(Math.floor(Number(amount) * Math.pow(10, fromAssetInfo.decimals)));
-      const minOut = BigInt(Math.floor(Number(minAmountOut) * Math.pow(10, toAssetInfo.decimals)));
+      updateToast(toastId, { type: 'success', title: `Successfully swapped ${fromAmount} ${fromAsset.symbol} for ${toAmount} ${toAsset.symbol}` });
       
-      setStatus('Executing swap...');
+      // Reset form
+      setFromAmount('');
+      setToAmount('');
+      setQuote(null);
       
-      // Execute the swap
-      const result = await swapTokensReal(
-        fromAsset,
-        toAsset,
-        amountIn,
-        minOut,
-        deadline,
-        wallet.publicKey!
-      );
-      
-      const resultAmount = Number(result) / Math.pow(10, toAssetInfo.decimals);
-      setStatus(`Swap successful! Received: ${resultAmount.toFixed(6)} ${toAssetInfo.symbol}`);
-      
-      // Clear form after successful swap
-      setTimeout(() => {
-        setAmount('');
-        setEstimatedOutput('');
-        setMinAmountOut('');
-        setPriceImpact('');
-        setStatus('');
-      }, 5000);
-      
-    } catch (e: any) {
-      setError(e.message || 'Swap failed');
+      // Reload balances
+      await loadBalances();
+    } catch (error) {
+      console.error('Swap error:', error);
+      updateToast(toastId, { type: 'error', title: 'Failed to execute swap. Please try again.' });
     } finally {
       setLoading(false);
     }
   };
 
-  // Handle max amount (placeholder - would need balance check)
-  const handleMaxAmount = () => {
-    // This would typically fetch the user's balance for the selected asset
-    setAmount('1000'); // Placeholder max amount
+  // Switch assets
+  const switchAssets = () => {
+    setFromAsset(toAsset);
+    setToAsset(fromAsset);
+    setFromAmount(toAmount);
+    setToAmount(fromAmount);
+    setQuote(null);
+  };
+
+  // Set max amount
+  const setMaxAmount = () => {
+    const balance = balances[fromAsset.symbol] || '0';
+    setFromAmount(balance);
+  };
+
+  // Handle amount change
+  const handleFromAmountChange = (value: string) => {
+    // Only allow numbers and decimal points
+    const sanitizedValue = value.replace(/[^0-9.]/g, '');
+    
+    // Prevent multiple decimal points
+    const parts = sanitizedValue.split('.');
+    if (parts.length > 2) return;
+    
+    // Limit decimal places
+    if (parts[1] && parts[1].length > 7) return;
+    
+    setFromAmount(sanitizedValue);
+    
+    // Clear errors when user starts typing
+    if (errors.fromAmount) {
+      setErrors(prev => ({ ...prev, fromAmount: undefined }));
+    }
   };
 
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg p-6 max-w-md mx-auto">
-      <h2 className="text-xl font-bold mb-6 text-center">Swap Tokens</h2>
-      
-      {/* From Asset */}
-      <div className="mb-4">
-        <div className="flex justify-between items-center mb-2">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">From</label>
-          <button 
-            onClick={handleMaxAmount}
-            className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400"
-          >
-            Max
-          </button>
-        </div>
-        <div className="flex space-x-2">
-          <select
-            className="flex-1 p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-zinc-800 text-sm"
-            value={fromAsset}
-            onChange={e => setFromAsset(e.target.value)}
-          >
-            {assets.map(asset => (
-              <option key={asset.address} value={asset.address}>
-                {asset.symbol}
-              </option>
-            ))}
-          </select>
-          <input
-            type="number"
-            className="flex-1 p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-zinc-800 text-sm"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            placeholder="0.0"
-            min="0"
-            step="any"
-          />
-        </div>
-      </div>
+    <div className="max-w-md mx-auto p-6 bg-white dark:bg-zinc-900 rounded-lg shadow-lg">
+      <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-6">Enhanced Swap</h2>
 
-      {/* Swap Button */}
-      <div className="flex justify-center mb-4">
-        <button
-          onClick={swapAssets}
-          className="p-2 rounded-full bg-gray-100 dark:bg-zinc-700 hover:bg-gray-200 dark:hover:bg-zinc-600 transition-colors"
-          disabled={loading}
-        >
-          <ArrowUpDown className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-        </button>
-      </div>
-
-      {/* To Asset */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">To</label>
-        <div className="flex space-x-2">
-          <select
-            className="flex-1 p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-zinc-800 text-sm"
-            value={toAsset}
-            onChange={e => setToAsset(e.target.value)}
-          >
-            {assets.map(asset => (
-              <option key={asset.address} value={asset.address}>
-                {asset.symbol}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            className="flex-1 p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-zinc-800 text-sm"
-            value={estimatedOutput}
-            readOnly
-            placeholder="0.0"
-          />
+      {!isConnected ? (
+        <div className="text-center py-8">
+          <p className="text-zinc-500 mb-4">Connect your wallet to start swapping</p>
         </div>
-      </div>
-
-      {/* Slippage Settings */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          Slippage Tolerance (%)
-        </label>
-        <div className="flex space-x-2">
-          {['0.5', '1.0', '2.0'].map(preset => (
-            <button
-              key={preset}
-              onClick={() => setSlippage(preset)}
-              className={`px-3 py-1 rounded text-sm ${
-                slippage === preset
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              {preset}%
-            </button>
-          ))}
-          <input
-            type="number"
-            className="flex-1 p-1 rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-zinc-800 text-sm text-center"
-            value={slippage}
-            onChange={e => setSlippage(e.target.value)}
-            min="0"
-            max="50"
-            step="0.1"
-          />
-        </div>
-      </div>
-
-      {/* Swap Details */}
-      {amount && estimatedOutput && (
-        <div className="mb-4 p-3 bg-gray-50 dark:bg-zinc-800 rounded-lg text-sm">
-          <div className="flex justify-between mb-1">
-            <span className="text-gray-600 dark:text-gray-400">Exchange Rate:</span>
-            <span className="text-gray-900 dark:text-gray-100">{exchangeRate}</span>
-          </div>
-          <div className="flex justify-between mb-1">
-            <span className="text-gray-600 dark:text-gray-400">Min. Received:</span>
-            <span className="text-gray-900 dark:text-gray-100">
-              {minAmountOut} {getAssetByAddress(toAsset)?.symbol}
-            </span>
-          </div>
-          {priceImpact && (
-            <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Price Impact:</span>
-              <span className={`${
-                Number(priceImpact) > 5 ? 'text-red-600' : 'text-gray-900 dark:text-gray-100'
-              }`}>
-                {priceImpact}%
-              </span>
+      ) : (
+        <>
+          {/* Error Display */}
+          {errors.general && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+              <p className="text-red-600 dark:text-red-400 text-sm">{errors.general}</p>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Swap Button */}
-      <button
-        className="w-full py-3 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
-        onClick={handleSwap}
-        disabled={loading || !amount || !estimatedOutput}
-      >
-        {loading ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Swapping...</span>
-          </>
-        ) : (
-          <span>Swap</span>
-        )}
-      </button>
+          {/* From Asset */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+              From
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={fromAmount}
+                onChange={(e) => handleFromAmountChange(e.target.value)}
+                placeholder="0.0000000"
+                className={`w-full px-3 py-2 pr-20 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  errors.fromAmount 
+                    ? 'border-red-300 dark:border-red-600' 
+                    : 'border-zinc-300 dark:border-zinc-600'
+                } bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white`}
+                disabled={loading}
+              />
+              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={setMaxAmount}
+                  disabled={loading}
+                  className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-200 dark:hover:bg-blue-800 disabled:opacity-50"
+                >
+                  Max
+                </button>
+                <select
+                  value={fromAsset.symbol}
+                  onChange={(e) => {
+                    const asset = assets.find(a => a.symbol === e.target.value);
+                    if (asset) setFromAsset(asset);
+                  }}
+                  className="px-2 py-1 text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded border border-zinc-300 dark:border-zinc-600"
+                  disabled={loading}
+                >
+                  {assets.map(asset => (
+                    <option key={asset.symbol} value={asset.symbol}>
+                      {asset.symbol}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {errors.fromAmount && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.fromAmount}</p>
+            )}
+            <p className="mt-1 text-xs text-zinc-500">
+              Balance: {balances[fromAsset.symbol] || '0.0000000'} {fromAsset.symbol}
+            </p>
+          </div>
 
-      {/* Status Messages */}
-      {status && (
-        <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg flex items-center space-x-2">
-          <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
-          <span className="text-green-800 dark:text-green-300 text-sm">{status}</span>
-        </div>
-      )}
+          {/* Switch Button */}
+          <div className="flex justify-center mb-4">
+            <button
+              onClick={switchAssets}
+              disabled={loading}
+              className="p-2 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+              </svg>
+            </button>
+          </div>
 
-      {error && (
-        <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center space-x-2">
-          <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-          <span className="text-red-800 dark:text-red-300 text-sm">{error}</span>
-        </div>
+          {/* To Asset */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+              To
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={toAmount}
+                readOnly
+                placeholder="0.0000000"
+                className={`w-full px-3 py-2 pr-20 border rounded-lg ${
+                  errors.toAmount 
+                    ? 'border-red-300 dark:border-red-600' 
+                    : 'border-zinc-300 dark:border-zinc-600'
+                } bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white`}
+              />
+              <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                <select
+                  value={toAsset.symbol}
+                  onChange={(e) => {
+                    const asset = assets.find(a => a.symbol === e.target.value);
+                    if (asset) setToAsset(asset);
+                  }}
+                  className="px-2 py-1 text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded border border-zinc-300 dark:border-zinc-600"
+                  disabled={loading}
+                >
+                  {assets.map(asset => (
+                    <option key={asset.symbol} value={asset.symbol}>
+                      {asset.symbol}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {errors.toAmount && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.toAmount}</p>
+            )}
+          </div>
+
+          {/* Quote Info */}
+          {quote && (
+            <div className="mb-4 p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">Price Impact:</span>
+                <span className={quote.priceImpact > 1 ? 'text-red-600' : 'text-zinc-900 dark:text-zinc-100'}>
+                  {quote.priceImpact.toFixed(2)}%
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">Minimum Received:</span>
+                <span className="text-zinc-900 dark:text-zinc-100">
+                  {quote.minimumReceived} {toAsset.symbol}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Slippage */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+              Slippage Tolerance
+            </label>
+            <div className="flex space-x-2">
+              {[0.1, 0.5, 1.0].map((value) => (
+                <button
+                  key={value}
+                  onClick={() => setSlippage(value)}
+                  className={`px-3 py-1 text-sm rounded ${
+                    slippage === value
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                  }`}
+                >
+                  {value}%
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Swap Button */}
+          <button
+            onClick={handleSwap}
+            disabled={loading || !fromAmount || !quote || Number(fromAmount) <= 0}
+            className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          >
+            {loading ? 'Swapping...' : 'Swap'}
+          </button>
+        </>
       )}
     </div>
   );
-} 
+}

@@ -239,7 +239,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         kit: {
           server,
           networkPassphrase: NETWORK_PASSPHRASE,
-          horizonUrl: CONFIG.STELLAR_HORIZON_URL,
+          horizonUrl: CONFIG.RPC_URL,
         },
       }));
     } else {
