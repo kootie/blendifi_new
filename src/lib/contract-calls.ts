@@ -1,6 +1,15 @@
 // Contract call stubs for Soroban/Blend contracts
 // TODO: Implement real contract logic using Soroban client and CONFIG values
 
+import { SorobanRpc, Contract, TransactionBuilder, BASE_FEE, Networks, nativeToScVal } from '@stellar/stellar-sdk';
+import { getAddress, signTransaction } from '@stellar/freighter-api';
+import { CONFIG } from './config';
+
+const server = new SorobanRpc.Server(CONFIG.RPC_URL);
+const networkPassphrase = CONFIG.NETWORK_PASSPHRASE;
+// Make sure CONFIG includes:
+// SWAP_CONTRACT_ID, BORROW_CONTRACT_ID, SUPPLY_CONTRACT_ID
+
 // Types for contract responses
 interface StakingInfo {
   stakedAmount: string;
@@ -63,9 +72,47 @@ export async function getSwapQuote(): Promise<SwapQuote | null> {
   };
 }
 
-export async function executeSwap(): Promise<string> {
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  return 'mock-swap-tx-' + Date.now();
+export async function executeSwap(
+  fromToken: string,
+  toToken: string,
+  amountIn: string,
+  minAmountOut: string
+): Promise<string> {
+  const userAddressResult = await getAddress();
+  const userAddress = userAddressResult.address;
+  const contractId = CONFIG.SWAP_CONTRACT_ID;
+  const contract = new Contract(contractId);
+  const account = await server.getAccount(userAddress);
+  const amountInBigInt = BigInt(Math.floor(Number(amountIn) * 1e7));
+  const minAmountOutBigInt = BigInt(Math.floor(Number(minAmountOut) * 1e7));
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      contract.call(
+        'swap_tokens',
+        nativeToScVal(userAddress, { type: 'address' }),
+        nativeToScVal(fromToken, { type: 'address' }),
+        nativeToScVal(toToken, { type: 'address' }),
+        nativeToScVal(amountInBigInt, { type: 'u128' }),
+        nativeToScVal(minAmountOutBigInt, { type: 'u128' }),
+        nativeToScVal(BigInt(Math.floor(Date.now() / 1000) + 1200), { type: 'u64' })
+      )
+    )
+    .setTimeout(30)
+    .build();
+  const signResult = await signTransaction(transaction.toXDR(), { network: networkPassphrase === Networks.TESTNET ? 'TESTNET' : 'PUBLIC' } as any);
+  const signedXDR = signResult.signedTxXdr;
+  // @ts-ignore
+  const result = await server.sendTransaction({ transaction: signedXDR });
+  if (result.status === 'PENDING') {
+    return result.hash;
+  } else {
+    // Log status for debugging
+    console.error('Transaction failed, status:', result.status);
+    throw new Error(`Transaction failed: ${result.status}`);
+  }
 }
 
 // ===== BORROWING FUNCTIONS =====
@@ -78,9 +125,40 @@ export async function getBorrowInfo(): Promise<BorrowInfo> {
   };
 }
 
-export async function borrowAsset(): Promise<string> {
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  return 'mock-borrow-tx-' + Date.now();
+export async function borrowAsset(
+  asset: string,
+  amount: string
+): Promise<string> {
+  const userAddressResult = await getAddress();
+  const userAddress = userAddressResult.address;
+  const contractId = CONFIG.BORROW_CONTRACT_ID;
+  const contract = new Contract(contractId);
+  const account = await server.getAccount(userAddress);
+  const amountBigInt = BigInt(Math.floor(Number(amount) * 1e7));
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      contract.call(
+        'borrow_from_blend',
+        nativeToScVal(userAddress, { type: 'address' }),
+        nativeToScVal(asset, { type: 'address' }),
+        nativeToScVal(amountBigInt, { type: 'u128' })
+      )
+    )
+    .setTimeout(30)
+    .build();
+  const signResult = await signTransaction(transaction.toXDR(), { network: networkPassphrase === Networks.TESTNET ? 'TESTNET' : 'PUBLIC' } as any);
+  const signedXDR = signResult.signedTxXdr;
+  // @ts-ignore
+  const result = await server.sendTransaction({ transaction: signedXDR });
+  if (result.status === 'PENDING') {
+    return result.hash;
+  } else {
+    console.error('Transaction failed, status:', result.status);
+    throw new Error(`Transaction failed: ${result.status}`);
+  }
 }
 
 // ===== SUPPLYING FUNCTIONS =====
@@ -92,14 +170,78 @@ export async function getSupplyInfo(): Promise<SupplyInfo> {
   };
 }
 
-export async function supplyAsset(): Promise<string> {
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  return 'mock-supply-tx-' + Date.now();
+export async function supplyAsset(
+  asset: string,
+  amount: string,
+  asCollateral: boolean = false
+): Promise<string> {
+  const userAddressResult = await getAddress();
+  const userAddress = userAddressResult.address;
+  const contractId = CONFIG.SUPPLY_CONTRACT_ID;
+  const contract = new Contract(contractId);
+  const account = await server.getAccount(userAddress);
+  const amountBigInt = BigInt(Math.floor(Number(amount) * 1e7));
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      contract.call(
+        'supply_to_blend',
+        nativeToScVal(userAddress, { type: 'address' }),
+        nativeToScVal(asset, { type: 'address' }),
+        nativeToScVal(amountBigInt, { type: 'u128' }),
+        nativeToScVal(asCollateral, { type: 'bool' })
+      )
+    )
+    .setTimeout(30)
+    .build();
+  const signResult = await signTransaction(transaction.toXDR(), { network: networkPassphrase === Networks.TESTNET ? 'TESTNET' : 'PUBLIC' } as any);
+  const signedXDR = signResult.signedTxXdr;
+  // @ts-ignore
+  const result = await server.sendTransaction({ transaction: signedXDR });
+  if (result.status === 'PENDING') {
+    return result.hash;
+  } else {
+    console.error('Transaction failed, status:', result.status);
+    throw new Error(`Transaction failed: ${result.status}`);
+  }
 }
 
-export async function withdrawAsset(): Promise<string> {
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  return 'mock-withdraw-tx-' + Date.now();
+export async function withdrawAsset(
+  asset: string,
+  amount: string
+): Promise<string> {
+  const userAddressResult = await getAddress();
+  const userAddress = userAddressResult.address;
+  const contractId = CONFIG.SUPPLY_CONTRACT_ID;
+  const contract = new Contract(contractId);
+  const account = await server.getAccount(userAddress);
+  const amountBigInt = BigInt(Math.floor(Number(amount) * 1e7));
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      contract.call(
+        'withdraw_from_blend',
+        nativeToScVal(userAddress, { type: 'address' }),
+        nativeToScVal(asset, { type: 'address' }),
+        nativeToScVal(amountBigInt, { type: 'u128' })
+      )
+    )
+    .setTimeout(30)
+    .build();
+  const signResult = await signTransaction(transaction.toXDR(), { network: networkPassphrase === Networks.TESTNET ? 'TESTNET' : 'PUBLIC' } as any);
+  const signedXDR = signResult.signedTxXdr;
+  // @ts-ignore
+  const result = await server.sendTransaction({ transaction: signedXDR });
+  if (result.status === 'PENDING') {
+    return result.hash;
+  } else {
+    console.error('Transaction failed, status:', result.status);
+    throw new Error(`Transaction failed: ${result.status}`);
+  }
 }
 
 // ===== UTILITY FUNCTIONS =====
