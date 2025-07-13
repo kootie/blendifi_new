@@ -40,13 +40,13 @@ export default function Supply() {
     return await getSupplyInfoFromContract();
   }, []);
 
-  const supplyAssetReal = useCallback(async (): Promise<void> => {
-    const txHash = await supplyAssetFromContract();
+  const supplyAssetReal = useCallback(async (asset: string, amount: string, asCollateral: boolean): Promise<void> => {
+    const txHash = await supplyAssetFromContract(asset, amount, asCollateral);
     console.log('Supply transaction hash:', txHash);
   }, []);
 
-  const withdrawAssetReal = useCallback(async (): Promise<void> => {
-    const txHash = await withdrawAssetFromContract();
+  const withdrawAssetReal = useCallback(async (asset: string, amount: string): Promise<void> => {
+    const txHash = await withdrawAssetFromContract(asset, amount);
     console.log('Withdraw transaction hash:', txHash);
   }, []);
 
@@ -71,7 +71,7 @@ export default function Supply() {
     try {
       const [balancePromises, supplyInfoResult] = await Promise.all([
         Promise.all(assets.map(async (asset) => {
-          const balance = await getTokenBalance();
+          const balance = await getTokenBalance(asset.address);
           return [asset.symbol, balance];
         })),
         getSupplyInfo()
@@ -126,7 +126,7 @@ export default function Supply() {
     setLoading(true);
 
     try {
-      await supplyAsset();
+      await supplyAsset(selectedAsset.address, amount, true);
       
       updateToast(toastId, { type: 'success', title: `Successfully supplied ${amount} ${selectedAsset.symbol}` });
       
@@ -151,7 +151,7 @@ export default function Supply() {
     setLoading(true);
 
     try {
-      await withdrawAsset();
+      await withdrawAsset(selectedAsset.address, amount);
       
       updateToast(toastId, { type: 'success', title: `Successfully withdrew ${amount} ${selectedAsset.symbol}` });
       

@@ -44,8 +44,8 @@ export default function Borrow() {
     return await getBorrowInfoFromContract();
   }, []);
 
-  const borrowAssetReal = useCallback(async (): Promise<void> => {
-    const txHash = await borrowAssetFromContract();
+  const borrowAssetReal = useCallback(async (asset: string, amount: string): Promise<void> => {
+    const txHash = await borrowAssetFromContract(asset, amount);
     console.log('Borrow transaction hash:', txHash);
   }, []);
 
@@ -70,7 +70,7 @@ export default function Borrow() {
     try {
       const [balancePromises, borrowInfoResult] = await Promise.all([
         Promise.all(assets.map(async (asset) => {
-          const balance = await getTokenBalance();
+          const balance = await getTokenBalance(asset.address);
           return [asset.symbol, balance];
         })),
         getBorrowInfo()
@@ -144,7 +144,7 @@ export default function Borrow() {
     setLoading(true);
 
     try {
-      await borrowAsset();
+      await borrowAsset(selectedAsset.address, amount);
       
       updateToast(toastId, { type: 'success', title: `Successfully borrowed ${amount} ${selectedAsset.symbol}` });
       

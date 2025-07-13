@@ -41,8 +41,8 @@ export default function Swap() {
     return await getSwapQuote();
   }, []);
 
-  const executeSwapReal = useCallback(async (): Promise<void> => {
-    const txHash = await executeSwapFromContract();
+  const executeSwapReal = useCallback(async (fromToken: string, toToken: string, amountIn: string, minAmountOut: string): Promise<void> => {
+    const txHash = await executeSwapFromContract(fromToken, toToken, amountIn, minAmountOut);
     console.log('Swap transaction hash:', txHash);
   }, []);
 
@@ -59,7 +59,7 @@ export default function Swap() {
 
     try {
       const balancePromises = assets.map(async (asset) => {
-        const balance = await getTokenBalance();
+        const balance = await getTokenBalance(asset.address);
         return [asset.symbol, balance];
       });
 
@@ -135,7 +135,7 @@ export default function Swap() {
     setLoading(true);
 
     try {
-      await executeSwapReal();
+      await executeSwapReal(fromAsset.address, toAsset.address, fromAmount, quote.minimumReceived);
       updateToast(toastId, { type: 'success', title: `Successfully swapped ${fromAmount} ${fromAsset.symbol} for ${toAmount} ${toAsset.symbol}` });
       setFromAmount('');
       setToAmount('');
