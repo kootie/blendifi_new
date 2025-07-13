@@ -52,11 +52,38 @@ export const useFreighter = (): UseFreighterResult => {
 
   const checkConnection = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await isConnected();
-      if (result.error) return false;
-      return result.isConnected;
+      const connected = await isConnected();
+      if (connected) {
+        const allowed = await isAllowed();
+        if (allowed) {
+          const addressResult = await getAddress();
+          if (!addressResult.error) {
+            setPublicKey(addressResult.address);
+            setIsConnected(true);
+            const networkResult = await getNetwork();
+            if (networkResult.error) {
+              setNetwork(DEFAULT_NETWORK);
+              setNetworkPassphrase(DEFAULT_NETWORK_PASSPHRASE);
+            } else {
+              setNetwork(networkResult.network || DEFAULT_NETWORK);
+              setNetworkPassphrase(networkResult.networkPassphrase || DEFAULT_NETWORK_PASSPHRASE);
+            }
+            return true;
+          }
+        }
+      }
+      // If any of the above checks fail, disconnect the wallet
+      setIsConnected(false);
+      setPublicKey(null);
+      setNetwork(null);
+      setNetworkPassphrase(null);
+      return false;
     } catch (err) {
       console.error('Error checking Freighter connection:', err);
+      setIsConnected(false);
+      setPublicKey(null);
+      setNetwork(null);
+      setNetworkPassphrase(null);
       return false;
     }
   }, []);
@@ -153,32 +180,7 @@ export const useFreighter = (): UseFreighterResult => {
   }, [isConnectedState]);
 
   useEffect(() => {
-    const initializeConnection = async () => {
-      try {
-        const connected = await checkConnection();
-        if (connected) {
-          const allowed = await isAllowed();
-          if (allowed) {
-            const addressResult = await getAddress();
-            if (!addressResult.error) {
-              setPublicKey(addressResult.address);
-              setIsConnected(true);
-              const networkResult = await getNetwork();
-              if (networkResult.error) {
-                setNetwork(DEFAULT_NETWORK);
-                setNetworkPassphrase(DEFAULT_NETWORK_PASSPHRASE);
-              } else {
-                setNetwork(networkResult.network || DEFAULT_NETWORK);
-                setNetworkPassphrase(networkResult.networkPassphrase || DEFAULT_NETWORK_PASSPHRASE);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error initializing Freighter connection:', error);
-      }
-    };
-    initializeConnection();
+    checkConnection();
   }, [checkConnection]);
 
   useEffect(() => {
