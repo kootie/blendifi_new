@@ -35,24 +35,10 @@ export default function Borrow() {
   });
   const [balances, setBalances] = useState<Record<string, string>>({});
 
-  // Real contract functions
-  const getTokenBalanceReal = useCallback(async (): Promise<string> => {
-    return await getTokenBalanceFromContract();
-  }, []);
-
-  const getBorrowInfoReal = useCallback(async (): Promise<BorrowInfo> => {
-    return await getBorrowInfoFromContract();
-  }, []);
-
-  const borrowAssetReal = useCallback(async (asset: string, amount: string): Promise<void> => {
-    const txHash = await borrowAssetFromContract(asset, amount);
-    console.log('Borrow transaction hash:', txHash);
-  }, []);
-
   // Use real functions instead of mocks
-  const getTokenBalance = getTokenBalanceReal;
-  const getBorrowInfo = getBorrowInfoReal;
-  const borrowAsset = borrowAssetReal;
+  const getTokenBalance = getTokenBalanceFromContract;
+  const getBorrowInfo = getBorrowInfoFromContract;
+  const borrowAsset = borrowAssetFromContract;
 
   // Load balances and borrow info
   const loadUserData = useCallback(async () => {
@@ -70,10 +56,10 @@ export default function Borrow() {
     try {
       const [balancePromises, borrowInfoResult] = await Promise.all([
         Promise.all(assets.map(async (asset) => {
-          const balance = await getTokenBalance(asset.address);
+          const balance = await getTokenBalanceFromContract(asset.address);
           return [asset.symbol, balance];
         })),
-        getBorrowInfo()
+        getBorrowInfoFromContract()
       ]);
 
       const balanceMap = Object.fromEntries(balancePromises);

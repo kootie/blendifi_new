@@ -31,30 +31,11 @@ export default function Supply() {
   });
   const [balances, setBalances] = useState<Record<string, string>>({});
 
-  // Real contract functions
-  const getTokenBalanceReal = useCallback(async (): Promise<string> => {
-    return await getTokenBalanceFromContract();
-  }, []);
-
-  const getSupplyInfoReal = useCallback(async (): Promise<SupplyInfo> => {
-    return await getSupplyInfoFromContract();
-  }, []);
-
-  const supplyAssetReal = useCallback(async (asset: string, amount: string, asCollateral: boolean): Promise<void> => {
-    const txHash = await supplyAssetFromContract(asset, amount, asCollateral);
-    console.log('Supply transaction hash:', txHash);
-  }, []);
-
-  const withdrawAssetReal = useCallback(async (asset: string, amount: string): Promise<void> => {
-    const txHash = await withdrawAssetFromContract(asset, amount);
-    console.log('Withdraw transaction hash:', txHash);
-  }, []);
-
   // Use real functions instead of mocks
-  const getTokenBalance = getTokenBalanceReal;
-  const getSupplyInfo = getSupplyInfoReal;
-  const supplyAsset = supplyAssetReal;
-  const withdrawAsset = withdrawAssetReal;
+  const getTokenBalance = getTokenBalanceFromContract;
+  const getSupplyInfo = getSupplyInfoFromContract;
+  const supplyAsset = supplyAssetFromContract;
+  const withdrawAsset = withdrawAssetFromContract;
 
   // Load balances and supply info
   const loadUserData = useCallback(async () => {
@@ -71,10 +52,10 @@ export default function Supply() {
     try {
       const [balancePromises, supplyInfoResult] = await Promise.all([
         Promise.all(assets.map(async (asset) => {
-          const balance = await getTokenBalance(asset.address);
+          const balance = await getTokenBalanceFromContract(asset.address);
           return [asset.symbol, balance];
         })),
-        getSupplyInfo()
+        getSupplyInfoFromContract()
       ]);
 
       const balanceMap = Object.fromEntries(balancePromises);

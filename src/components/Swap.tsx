@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useWallet } from '../context/WalletContext';
 import { useToast } from '../context/ToastContext';
 import { CONFIG } from '../lib/config';
-import { getTokenBalance as getTokenBalanceFromContract, executeSwap as executeSwapFromContract } from '../lib/contract-calls';
+import { getTokenBalance as getTokenBalanceFromContract, executeSwap as executeSwapFromContract, getSwapQuote as getSwapQuoteFromContract } from '../lib/contract-calls';
 
 const assets = CONFIG.SUPPORTED_ASSETS;
 
@@ -32,23 +32,9 @@ export default function Swap() {
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [balances, setBalances] = useState<Record<string, string>>({});
 
-  // Real contract functions
-  const getTokenBalanceReal = useCallback(async (): Promise<string> => {
-    return await getTokenBalanceFromContract();
-  }, []);
-
-  const getSwapQuoteReal = useCallback(async (): Promise<SwapQuote | null> => {
-    return await getSwapQuote();
-  }, []);
-
-  const executeSwapReal = useCallback(async (fromToken: string, toToken: string, amountIn: string, minAmountOut: string): Promise<void> => {
-    const txHash = await executeSwapFromContract(fromToken, toToken, amountIn, minAmountOut);
-    console.log('Swap transaction hash:', txHash);
-  }, []);
-
   // Use real functions instead of mocks
-  const getTokenBalance = getTokenBalanceReal;
-  const getSwapQuote = getSwapQuoteReal;
+  const getTokenBalance = getTokenBalanceFromContract;
+  const getSwapQuote = getSwapQuoteFromContract;
 
   // Load balances
   const loadBalances = useCallback(async () => {
@@ -59,7 +45,7 @@ export default function Swap() {
 
     try {
       const balancePromises = assets.map(async (asset) => {
-        const balance = await getTokenBalance(asset.address);
+        const balance = await getTokenBalanceFromContract(asset.address);
         return [asset.symbol, balance];
       });
 
@@ -82,7 +68,7 @@ export default function Swap() {
       }
 
       try {
-        const quoteResult = await getSwapQuoteReal();
+        const quoteResult = await getSwapQuote();
         setQuote(quoteResult);
         if (quoteResult) {
           setToAmount(quoteResult.toAmount);
@@ -95,7 +81,7 @@ export default function Swap() {
     };
 
     getQuote();
-  }, [fromAsset, toAsset, fromAmount, getSwapQuoteReal]);
+  }, [fromAsset, toAsset, fromAmount, getSwapQuote]);
 
   // Load balances on mount and when wallet changes
   useEffect(() => {
@@ -135,7 +121,7 @@ export default function Swap() {
     setLoading(true);
 
     try {
-      await executeSwapReal(fromAsset.address, toAsset.address, fromAmount, quote.minimumReceived);
+      await executeSwapFromContract(fromAsset.address, toAsset.address, fromAmount, quote.minimumReceived);
       updateToast(toastId, { type: 'success', title: `Successfully swapped ${fromAmount} ${fromAsset.symbol} for ${toAmount} ${toAsset.symbol}` });
       setFromAmount('');
       setToAmount('');
