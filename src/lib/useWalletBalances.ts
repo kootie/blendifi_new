@@ -1,6 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { CONFIG } from './config';
-import { getTokenBalance } from './stellar-utils';
+
+// Helper to fetch balances from Horizon
+async function fetchHorizonBalances(address: string) {
+  const HORIZON_URL = 'https://horizon-testnet.stellar.org';
+  const res = await fetch(`${HORIZON_URL}/accounts/${address}`);
+  if (!res.ok) throw new Error('Failed to fetch account from Horizon');
+  return (await res.json()).balances;
+}
 
 export function useWalletBalances(publicKey: string | null) {
   const [balances, setBalances] = useState<any[] | null>(null);
@@ -15,16 +22,22 @@ export function useWalletBalances(publicKey: string | null) {
     setLoading(true);
     setError(null);
     try {
-      const results = await Promise.all(
-        CONFIG.SUPPORTED_ASSETS.map(async (asset) => {
-          const raw = await getTokenBalance(asset.address, publicKey);
-          const balance = Number(raw) / Math.pow(10, asset.decimals);
+      const horizonBalances = await fetchHorizonBalances(publicKey);
+      const results = CONFIG.SUPPORTED_ASSETS.map((asset) => {
+        if (asset.isNative) {
+          const xlm = horizonBalances.find((b: any) => b.asset_type === 'native');
           return {
             ...asset,
-            balance: balance.toFixed(asset.decimals),
+            balance: xlm ? xlm.balance : '0',
           };
-        })
-      );
+        } else {
+          const token = horizonBalances.find((b: any) => b.asset_code === asset.symbol && b.asset_issuer === asset.issuer);
+          return {
+            ...asset,
+            balance: token ? token.balance : '0',
+          };
+        }
+      });
       setBalances(results);
     } catch (e) {
       setError('Failed to fetch balances');

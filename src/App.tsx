@@ -206,10 +206,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <WalletProvider>
-      <ToastProvider>
+    <ToastProvider>
+      <WalletProvider>
         <AppContent />
-      </ToastProvider>
-    </WalletProvider>
+      </WalletProvider>
+    </ToastProvider>
   );
 } 
