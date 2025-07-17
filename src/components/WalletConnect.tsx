@@ -9,7 +9,8 @@ const WalletConnect: React.FC = () => {
     isLoading,
     error,
     connect,
-    disconnect
+    disconnect,
+    walletInfo
   } = useWallet();
 
   const formatAddress = (address: string | null) => {
@@ -25,30 +26,19 @@ const WalletConnect: React.FC = () => {
     disconnect();
   };
 
-  const isFreighterAvailable = true; // We'll handle this in the context
-
-  if (!isFreighterAvailable) {
-    return (
-      <div className="wallet-status wallet-disconnected">
-        <span role="img" aria-label="not installed">🔗</span>
-        <span>Freighter not installed</span>
-        <a
-          href="https://www.freighter.app/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn btn-sm btn-primary"
-        >
-          Install
-        </a>
-      </div>
-    );
-  }
+  // Remove Freighter-specific check and UI
 
   if (isConnected) {
     return (
       <div className="flex items-center gap-4">
-        <div className="wallet-status wallet-connected">
+        <div className="wallet-status wallet-connected flex items-center gap-2">
           <span role="img" aria-label="connected">✅</span>
+          {walletInfo && walletInfo.icon && (
+            <img src={walletInfo.icon} alt={walletInfo.name} className="w-6 h-6 rounded-full border" />
+          )}
+          {walletInfo && walletInfo.name && (
+            <span className="font-medium text-sm">{walletInfo.name}</span>
+          )}
           <span>{formatAddress(publicKey)}</span>
           <span className="text-sm">({network})</span>
         </div>
@@ -80,7 +70,7 @@ const WalletConnect: React.FC = () => {
             Connecting...
           </>
         ) : (
-          'Connect Wallet'
+          'Connect Stellar Wallet'
         )}
       </button>
       {error && (

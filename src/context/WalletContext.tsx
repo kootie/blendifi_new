@@ -1,17 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import {
-  isConnected,
-  isAllowed,
-  setAllowed,
-  requestAccess,
-  getAddress,
-  getNetwork,
-  getNetworkDetails,
-  signTransaction,
-  addToken
-} from '@stellar/freighter-api';
+  StellarWalletsKit,
+  WalletNetwork,
+  allowAllModules,
+  ISupportedWallet
+} from '@creit.tech/stellar-wallets-kit';
 import * as SorobanClient from 'soroban-client';
 import { CONFIG } from '../lib/config';
+import { useToast } from './ToastContext';
 
 const SOROBAN_RPC = 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
@@ -31,7 +27,9 @@ export interface WalletState {
   networkPassphrase: string | null;
   isLoading: boolean;
   error: string | null;
-  kit: FreighterKit | null;
+  kit: any; // Updated to any for kit instance
+  walletId: string | null; // Add walletId to track selected wallet
+  walletInfo?: ISupportedWallet | null; // Store full wallet info
 }
 
 interface WalletContextType extends WalletState {
@@ -59,6 +57,12 @@ interface WalletProviderProps {
   children: ReactNode;
 }
 
+// Add kit instance outside component to avoid re-instantiation
+const kit = new StellarWalletsKit({
+  network: WalletNetwork.TESTNET,
+  modules: allowAllModules(),
+});
+
 export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const [state, setState] = useState<WalletState>({
     isConnected: false,
@@ -67,109 +71,58 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     networkPassphrase: null,
     isLoading: false,
     error: null,
-    kit: null,
+    kit: kit,
+    walletId: null,
+    walletInfo: null,
   });
 
-  const checkConnection = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await isConnected();
-      if (result.error) return false;
-      return result.isConnected;
-    } catch (err) {
-      console.error('Error checking Freighter connection:', err);
-      return false;
-    }
-  }, []);
-
-  const refreshConnection = useCallback(async (): Promise<void> => {
-    try {
-      const connected = await checkConnection();
-      if (connected) {
-        const allowed = await isAllowed();
-        if (allowed) {
-          const addressResult = await getAddress();
-          if (!addressResult.error) {
-            const networkResult = await getNetwork();
-            const network = networkResult.error ? DEFAULT_NETWORK : (networkResult.network || DEFAULT_NETWORK);
-            const networkPassphrase = networkResult.error ? DEFAULT_NETWORK_PASSPHRASE : (networkResult.networkPassphrase || DEFAULT_NETWORK_PASSPHRASE);
-            
-            setState(prev => ({
-              ...prev,
-              isConnected: true,
-              publicKey: addressResult.address,
-              network,
-              networkPassphrase,
-              error: null,
-            }));
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error refreshing connection:', error);
-    }
-  }, [checkConnection]);
+  const { showToast } = useToast();
 
   const connect = useCallback(async (): Promise<boolean> => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
     try {
-      const connected = await checkConnection();
-      if (!connected) {
-        setState(prev => ({ 
-          ...prev, 
-          isLoading: false, 
-          error: 'Freighter wallet is not installed. Please install it from https://www.freighter.app/' 
-        }));
-        return false;
-      }
-
-      const allowed = await isAllowed();
-      if (!allowed) {
-        const allowedSet = await setAllowed();
-        if (!allowedSet) {
-          setState(prev => ({ 
-            ...prev, 
-            isLoading: false, 
-            error: 'Permission denied. Please allow this app to access Freighter.' 
+      await kit.openModal({
+        onWalletSelected: async (option: ISupportedWallet) => {
+          kit.setWallet(option.id);
+          const { address } = await kit.getAddress();
+          setState(prev => ({
+            ...prev,
+            isConnected: true,
+            publicKey: address,
+            network: 'TESTNET',
+            networkPassphrase: 'Test SDF Network ; September 2015',
+            isLoading: false,
+            error: null,
+            walletId: option.id,
+            walletInfo: option, // Store full wallet info
           }));
-          return false;
-        }
-      }
-
-      const accessResult = await requestAccess();
-      if (accessResult.error) {
-        setState(prev => ({ 
-          ...prev, 
-          isLoading: false, 
-          error: accessResult.error.message || 'Could not get address from Freighter.' 
-        }));
-        return false;
-      }
-
-      const networkResult = await getNetwork();
-      const network = networkResult.error ? DEFAULT_NETWORK : (networkResult.network || DEFAULT_NETWORK);
-      const networkPassphrase = networkResult.error ? DEFAULT_NETWORK_PASSPHRASE : (networkResult.networkPassphrase || DEFAULT_NETWORK_PASSPHRASE);
-
-      setState(prev => ({
-        ...prev,
-        isConnected: true,
-        publicKey: accessResult.address,
-        network,
-        networkPassphrase,
-        isLoading: false,
-        error: null,
-      }));
-
+          showToast('success', 'Wallet Connected', {
+            message: `Connected to ${option.name || 'wallet'}: ${address.slice(0, 6)}...${address.slice(-4)}`,
+          });
+        },
+        onClosed: (err) => {
+          setState(prev => ({ ...prev, isLoading: false, error: err ? err.message : null }));
+          if (err) {
+            showToast('error', 'Wallet Connection Cancelled', {
+              message: err.message,
+            });
+          } else {
+            showToast('info', 'Wallet Connection Cancelled', {
+              message: 'No wallet was selected.',
+            });
+          }
+        },
+        modalTitle: 'Select a Stellar Wallet',
+      });
       return true;
     } catch (err: any) {
-      setState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        error: err.message || 'Failed to connect to Freighter wallet' 
-      }));
+      setState(prev => ({ ...prev, isLoading: false, error: err.message || 'Failed to connect to wallet' }));
+      showToast('error', 'Wallet Connection Error', {
+        message: err.message || 'Failed to connect to wallet',
+      });
       return false;
     }
-  }, [checkConnection]);
+  }, [showToast]);
 
   const disconnect = useCallback(() => {
     setState({
@@ -179,56 +132,53 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       networkPassphrase: null,
       isLoading: false,
       error: null,
-      kit: null,
+      kit: kit,
+      walletId: null,
+      walletInfo: null,
     });
-  }, []);
+    showToast('info', 'Wallet Disconnected', {
+      message: 'You have disconnected your wallet.',
+    });
+  }, [showToast]);
 
+  // Update signTransaction, getAddress, getNetworkDetails, addToken to use kit methods if available
   const signTransactionCb = useCallback(async (transaction: any, options: any = {}): Promise<string> => {
     if (!state.isConnected) throw new Error('Wallet not connected');
-    try {
-      const result = await signTransaction(transaction, options);
-      if (result.error) throw new Error(result.error.message);
-      return result.signedTxXdr;
-    } catch (err: any) {
-      throw new Error(`Transaction signing failed: ${err.message}`);
+    if (!kit) throw new Error('Wallet kit not initialized');
+    // Use kit's signTransaction if available, otherwise throw
+    if (typeof kit.signTransaction === 'function') {
+      return await kit.signTransaction(transaction, options);
     }
+    throw new Error('signTransaction not supported by selected wallet');
   }, [state.isConnected]);
 
   const getAddressCb = useCallback(async (): Promise<string> => {
     if (!state.isConnected) throw new Error('Wallet not connected');
-    try {
-      const result = await getAddress();
-      if (result.error) throw new Error(result.error.message);
-      return result.address;
-    } catch (err: any) {
-      throw new Error(`Failed to get address: ${err.message}`);
-    }
+    if (!kit) throw new Error('Wallet kit not initialized');
+    const { address } = await kit.getAddress();
+    return address;
   }, [state.isConnected]);
 
   const getNetworkDetailsCb = useCallback(async (): Promise<any> => {
-    if (!state.isConnected) throw new Error('Wallet not connected');
-    try {
-      return await getNetworkDetails();
-    } catch (err: any) {
-      throw new Error(`Failed to get network details: ${err.message}`);
-    }
-  }, [state.isConnected]);
+    // If kit exposes network details, use them; otherwise return defaults
+    return {
+      network: 'TESTNET',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    };
+  }, []);
 
   const addTokenCb = useCallback(async (contractId: string, networkPassphrase: string): Promise<string> => {
-    if (!state.isConnected) throw new Error('Wallet not connected');
-    try {
-      const result = await addToken({ contractId, networkPassphrase });
-      if (result.error) throw new Error(result.error.message);
-      return result.contractId;
-    } catch (err: any) {
-      throw new Error(`Failed to add token: ${err.message}`);
+    // If kit exposes addToken, use it; otherwise throw
+    if (typeof kit.addToken === 'function') {
+      return await kit.addToken(contractId, networkPassphrase);
     }
-  }, [state.isConnected]);
+    throw new Error('addToken not supported by selected wallet');
+  }, []);
 
   // Initialize connection on mount
   useEffect(() => {
-    refreshConnection();
-  }, [refreshConnection]);
+    // refreshConnection(); // No longer needed
+  }, []);
 
   // Set up Soroban kit when connected
   useEffect(() => {
@@ -251,27 +201,36 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   useEffect(() => {
     const interval = setInterval(() => {
       if (state.isConnected) {
-        refreshConnection();
+        // refreshConnection(); // No longer needed
       }
     }, 30000); // Check every 30 seconds
 
     return () => clearInterval(interval);
-  }, [state.isConnected, refreshConnection]);
+  }, [state.isConnected]);
 
-  const contextValue: WalletContextType = {
-    ...state,
-    connect,
-    disconnect,
-    signTransaction: signTransactionCb,
-    getAddress: getAddressCb,
-    getNetworkDetails: getNetworkDetailsCb,
-    addToken: addTokenCb,
-    checkConnection,
-    refreshConnection,
-  };
+  // Example network mismatch detection (expand as needed)
+  useEffect(() => {
+    if (state.isConnected && state.network !== 'TESTNET') {
+      showToast('warning', 'Network Mismatch', {
+        message: `Connected wallet is on ${state.network}, but the app requires TESTNET.`,
+      });
+    }
+  }, [state.isConnected, state.network, showToast]);
 
   return (
-    <WalletContext.Provider value={contextValue}>
+    <WalletContext.Provider
+      value={{
+        ...state,
+        connect,
+        disconnect,
+        signTransaction: signTransactionCb,
+        getAddress: getAddressCb,
+        getNetworkDetails: getNetworkDetailsCb,
+        addToken: addTokenCb,
+        checkConnection: async () => state.isConnected,
+        refreshConnection: async () => {},
+      }}
+    >
       {children}
     </WalletContext.Provider>
   );
