@@ -144,7 +144,7 @@ export default function Borrow() {
     setLoading(true);
 
     try {
-      await borrowAsset();
+      await borrowAsset(selectedAsset.address, amount);
       
       updateToast(toastId, { type: 'success', title: `Successfully borrowed ${amount} ${selectedAsset.symbol}` });
       

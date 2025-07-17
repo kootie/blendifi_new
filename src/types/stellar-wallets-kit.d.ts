@@ -1,0 +1,1 @@
+declare module '@creit.tech/stellar-wallets-kit'; 

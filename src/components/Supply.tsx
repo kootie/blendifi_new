@@ -126,7 +126,7 @@ export default function Supply() {
     setLoading(true);
 
     try {
-      await supplyAsset();
+      await supplyAsset(selectedAsset.address, amount, false);
       
       updateToast(toastId, { type: 'success', title: `Successfully supplied ${amount} ${selectedAsset.symbol}` });
       
@@ -151,7 +151,7 @@ export default function Supply() {
     setLoading(true);
 
     try {
-      await withdrawAsset();
+      await withdrawAsset(selectedAsset.address, amount);
       
       updateToast(toastId, { type: 'success', title: `Successfully withdrew ${amount} ${selectedAsset.symbol}` });
       

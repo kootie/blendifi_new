@@ -135,7 +135,7 @@ export default function Swap() {
     setLoading(true);
 
     try {
-      await executeSwapReal();
+      await executeSwapFromContract(fromAsset.address, toAsset.address, fromAmount, quote.minimumReceived);
       updateToast(toastId, { type: 'success', title: `Successfully swapped ${fromAmount} ${fromAsset.symbol} for ${toAmount} ${toAsset.symbol}` });
       setFromAmount('');
       setToAmount('');

@@ -11,8 +11,6 @@ import { useToast } from './ToastContext';
 
 const SOROBAN_RPC = 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
-const DEFAULT_NETWORK = 'TESTNET';
-const DEFAULT_NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 export interface FreighterKit {
   server: any;
@@ -100,7 +98,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
             message: `Connected to ${option.name || 'wallet'}: ${address.slice(0, 6)}...${address.slice(-4)}`,
           });
         },
-        onClosed: (err) => {
+        onClosed: (err: any) => {
           setState(prev => ({ ...prev, isLoading: false, error: err ? err.message : null }));
           if (err) {
             showToast('error', 'Wallet Connection Cancelled', {
